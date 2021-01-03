@@ -345,8 +345,174 @@ def _intersect1d_dispatcher(
     return (ar1, ar2)
 
 
+
+
+
+def _get_bounded(ar1, ar2, return_indices = False, assume_sorted=False):
+    """ returns max/min projected ar1 and ar2
+    max/min optimization:
+    idea: range [123456789]
+        ar1 = [123 567  ]
+        ar2 = [   45 789]
+    We can already discard large portions based on min/max values:
+        ar1' =[    567  ]
+        ar2' =[    5 7  ]
+    
+    For sorted the cost is O(log(len(ar1))) + O(log(len(ar2)))
+    While it is O(len(ar1))+O(len(ar2)) otherwise
+    
+    """
+    if assume_sorted:
+        if ar1[0] < ar2[0]:
+            lower1 = np.searchsorted(ar1, ar2[0])
+            lower2 = 0
+        else:
+            lower1 = 0
+            lower2 = np.searchsorted(ar2, ar1[0])
+
+
+        if ar1[-1] < ar2[-1]:
+            upper1 = len(ar1)
+            upper2 = np.searchsorted(ar2, ar1[-1], side='right')
+        else:
+            upper1 = np.searchsorted(ar1, ar2[-1], side='right')
+            upper2 = len(ar2)
+           
+           
+            
+        ar1 = ar1[lower1: upper1]
+        ar2 = ar2[lower2: upper2]
+        if return_indices:
+            return ar1, ar2, slice(lower1, upper1),  slice(lower2, upper2)
+        else:
+            return ar1, ar2
+
+    else:
+        largest = min(np.max(ar1), np.max(ar2))
+        lowest = max(np.min(ar1), np.min(ar2))
+
+        mask1 = np.logical_and(ar1 >= lowest, ar1 <= largest)
+        mask2 = np.logical_and(ar2 >= lowest, ar2 <= largest)
+        ar1 = ar1[mask1]
+        ar2 = ar2[mask2]
+        if return_indices:
+            return ar1, ar2, np.nonzero(mask1)[0], np.nonzero(mask2)[0]
+        else:
+            return ar1, ar2
+
+
+def _intersect1d_no_indices(ar1, ar2, assume_unique=False, assume_sorted=False, enable_min_max=False):
+    ar1 = np.asanyarray(ar1)
+    ar2 = np.asanyarray(ar2)
+    
+    # early exit
+    if len(ar1)==0 or len(ar2)==0:
+        return np.array([], dtype=ar1.dtype) # dtype correct?
+    
+    # do min/max optimization
+    if assume_sorted:
+        ar1, ar2 = _get_bounded(ar1, ar2, assume_sorted=assume_sorted)
+    
+        # early exit, array sizes might have changed
+        if len(ar1)==0 or len(ar2)==0:
+            return np.array([], dtype=ar1.dtype) # dtype correct?
+    
+    if assume_unique:
+        if assume_sorted:
+            ar1 = ar1.ravel()
+            ar2 = ar2.ravel()
+        else:
+            ar1 = ar1.copy()
+            ar1.sort()
+            ar2 = ar2.copy()
+            ar2.sort()
+
+    else:
+        if assume_sorted:
+            # if the larger array is sorted we can omit dedup in case of using searchsorted
+            if len(ar1) <= len(ar2):
+                ar1 = _dedup(ar1)
+            if len(ar2) <= len(ar1):
+                ar2 = _dedup(ar2)
+        else:
+            # not unique and not sorted
+            # in principle sorting the larger array is enough
+            # this becomes obsolete if there is a faster dedup
+            if len(ar1) <= len(ar2):
+                ar1 = np.unique(ar1)
+            else:
+                ar1 = ar1.copy()
+                ar1.sort()
+            
+            if len(ar2) <= len(ar1):
+                ar2 = np.unique(ar2)
+            else:
+                ar2 = ar2.copy()
+                ar2.sort()
+
+    
+    #if max(len(ar1), len(ar2)) / min(len(ar1), len(ar2)) > 5.:
+        # here we use the variant that is much better for larger array difference
+    return _intersect_search(ar1, ar2)
+
+def _intersect_search(ar1, ar2, return_indices=False):
+    """ intersect the sorted arrays ar1 and ar2 using searchsorted
+        this is achieved by first determining the longer array
+        then the smaller array is used to search in the larger array
+
+        it returns the intersection and potentially the indices which lead to the intersection.
+    """
+    
+    # find smaller array
+    if len(ar1) < len(ar2):
+        smaller_arr = ar1
+        longer_arr = ar2
+        swapped = False
+    else:
+        longer_arr = ar1
+        smaller_arr = ar2
+        swapped = True
+    
+    # use upper value of longer array to limit search in smaller array
+    # can potentially be omitted if it is only called with min_max optimisation first
+    i = np.searchsorted(smaller_arr, longer_arr[-1], 'right')
+    smaller_arr=smaller_arr[:i]
+
+    # find indices into larger array that lead to sorted arr
+    indices_larger = np.searchsorted(longer_arr, smaller_arr, 'left')
+
+    # keep only those that are exactly equal
+    mask = smaller_arr==longer_arr[indices_larger]
+    indices_larger = indices_larger[mask]
+
+    if return_indices:
+        indices_smaller = np.nonzero(mask)[0]
+        if swapped:
+            return smaller_arr[indices_smaller], indices_larger, indices_smaller
+        else:
+            return smaller_arr[indices_smaller], indices_smaller, indices_larger
+    else:
+        return smaller_arr[mask]
+
+
+
+    
+def _dedup(ar, return_index=False):
+    """ keeps only one for each consecutive duplicate element
+        code is very similar to np.unique
+    """
+    ar = np.asanyarray(ar).ravel()
+    mask = np.empty(ar.shape, dtype=np.bool_)
+    mask[:1] = True
+    mask[1:] = ar[1:] != ar[:-1]
+    
+    if return_index:
+        return ar[mask], np.nonzero(mask)[0]
+    else:
+        return ar[mask]
+    
 @array_function_dispatch(_intersect1d_dispatcher)
-def intersect1d(ar1, ar2, assume_unique=False, return_indices=False):
+def intersect1d(ar1, ar2, return_indices=False, assume_unique=False, assume_sorted=False):
     """
     Find the intersection of two arrays.
 
@@ -367,6 +533,13 @@ def intersect1d(ar1, ar2, assume_unique=False, return_indices=False):
         multiple. Default is False.
 
         .. versionadded:: 1.15.0
+    assume_sorted : bool
+        If True, the input arrays are both assumed to be sorted, which
+        can significantly speed up the calculation. If True but ``ar1`` or ``ar2``
+        are not unique, incorrect results and out-of-bounds indices could result.
+        Default is False.
+
+        .. versionadded:: 1.20.0
 
     Returns
     -------
@@ -408,40 +581,75 @@ def intersect1d(ar1, ar2, assume_unique=False, return_indices=False):
     (array([1, 2, 4]), array([1, 2, 4]), array([1, 2, 4]))
 
     """
+
+    if return_indices:
+        return _intersect1d_with_indices(ar1, ar2, assume_unique, assume_sorted)
+    else:
+        return _intersect1d_no_indices(ar1, ar2, assume_unique, assume_sorted)
+    
+def _intersect1d_with_indices(ar1, ar2, assume_unique=False, assume_sorted=False):
     ar1 = np.asanyarray(ar1)
     ar2 = np.asanyarray(ar2)
+    
+    ar1 = ar1.ravel()
+    ar2 = ar2.ravel()
+    
+    # early exit
+    if len(ar1)==0 or len(ar2)==0:
+        return (np.array([], dtype=ar1.dtype), # dtype correct?
+                np.array([], dtype=np.uint32), # dtype correct?
+                np.array([], dtype=np.uint32)) # dtype correct?
+    m1_0 = slice(0, None)
+    m2_0 = slice(0, None)
+    if assume_sorted:
+        # do min/max optimization
+        ar1, ar2, m1_0, m2_0 = _get_bounded(ar1, ar2, return_indices=True, assume_sorted=assume_sorted)
+        
+        # early exit, array sizes might have changed
+        if len(ar1)==0 or len(ar2)==0:
+            return (np.array([], dtype=ar1.dtype), # dtype correct?
+                    np.array([], dtype=np.uint32), # dtype correct?
+                    np.array([], dtype=np.uint32)) # dtype correct?
+    m1_1 = None
+    m2_1 = None
+    if assume_unique:
+        if not assume_sorted:
+            m1_1 = ar1.argsort(kind="mergesort")
+            m2_1 = ar2.argsort(kind="mergesort")
+            ar1 = ar1[m1_1]
+            ar2 = ar2[m2_1]
+    else:
+        if assume_sorted:
+            if len(ar1) <= len(ar2):
+                ar1, m1_1 = _dedup(ar1, return_index=True)
+            else:
+                m1_1 = np.arange(len(ar1))
 
-    if not assume_unique:
-        if return_indices:
-            ar1, ind1 = unique(ar1, return_index=True)
-            ar2, ind2 = unique(ar2, return_index=True)
+            if len(ar2) < len(ar1):
+                ar2, m2_1 = _dedup(ar2, return_index=True)
+            else:
+                m2_1 = np.arange(len(ar2))
         else:
-            ar1 = unique(ar1)
-            ar2 = unique(ar2)
+            ar1, m1_1 = np.unique(ar1, return_index=True)
+            ar2, m2_1 = np.unique(ar2, return_index=True)
+    
+    int1d, ar1_indices, ar2_indices =  _intersect_search(ar1, ar2, return_indices=True)
+
+    if not m1_1 is None:
+        ar1_indices = m1_1[ar1_indices]
+        ar2_indices = m2_1[ar2_indices]
+
+    if isinstance(m1_0, slice):
+        # arrays were already sorted, only offset values
+        if m1_0.start > 0:
+            ar1_indices += m1_0.start
+        if m2_0.start > 0:
+            ar2_indices += m2_0.start
     else:
-        ar1 = ar1.ravel()
-        ar2 = ar2.ravel()
-
-    aux = np.concatenate((ar1, ar2))
-    if return_indices:
-        aux_sort_indices = np.argsort(aux, kind='mergesort')
-        aux = aux[aux_sort_indices]
-    else:
-        aux.sort()
-
-    mask = aux[1:] == aux[:-1]
-    int1d = aux[:-1][mask]
-
-    if return_indices:
-        ar1_indices = aux_sort_indices[:-1][mask]
-        ar2_indices = aux_sort_indices[1:][mask] - ar1.size
-        if not assume_unique:
-            ar1_indices = ind1[ar1_indices]
-            ar2_indices = ind2[ar2_indices]
-
-        return int1d, ar1_indices, ar2_indices
-    else:
-        return int1d
+        ar1_indices = m1_0[ar1_indices]
+        ar2_indices = m2_0[ar2_indices]
+        
+    return int1d, ar1_indices, ar2_indices
 
 
 def _setxor1d_dispatcher(ar1, ar2, assume_unique=None):

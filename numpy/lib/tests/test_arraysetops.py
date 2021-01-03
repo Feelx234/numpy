@@ -29,7 +29,35 @@ class TestSetOps:
         ed = np.array([1, 2, 5])
         c = intersect1d(a, b)
         assert_array_equal(c, ed)
+
+        # empty inputs
         assert_array_equal([], intersect1d([], []))
+        assert_array_equal([], intersect1d([], [], assume_unique=True))
+        assert_array_equal([], intersect1d([], [], assume_sorted=True))
+        assert_array_equal([], intersect1d([], [], assume_unique=True, assume_sorted=True))
+        assert_array_equal([], intersect1d([1], []))
+        assert_array_equal([], intersect1d([], [1]))
+
+        # Testing with assume_sorted=True
+        # unique inputs
+        a = np.array([1, 2, 5, 7])
+        b = np.array([1, 2, 3, 4, 5])
+
+        ec = np.array([1, 2, 5])
+
+        c = intersect1d(a, b, assume_sorted=True)
+        assert_array_equal(c, ec)
+        c = intersect1d(a, b, assume_unique=True, assume_sorted=True)
+        assert_array_equal(c, ec)
+
+        # non-unique inputs
+        a = np.array([1, 2, 5, 5, 7])
+        b = np.array([1, 2, 3, 3, 4, 5])
+
+        ed = np.array([1, 2, 5])
+        c = intersect1d(a, b, assume_sorted=True)
+        assert_array_equal(c, ed)
+
 
     def test_intersect1d_array_like(self):
         # See gh-11772
@@ -79,6 +107,55 @@ class TestSetOps:
         ui1 = np.unravel_index(i1, a.shape)
         ui2 = np.unravel_index(i2, b.shape)
         ea = np.array([2, 7, 8])
+        assert_array_equal(ea, a[ui1])
+        assert_array_equal(ea, b[ui2])
+
+        # Down here we always set assume_sorted=True
+        # unique inputs
+        a = np.array([1, 2, 3, 4])
+        b = np.array([2, 1, 4, 6])
+        a.sort()
+        b.sort()
+        c, i1, i2 = intersect1d(a, b, assume_unique=True, return_indices=True, assume_sorted=True)
+        ee = np.array([1, 2, 4])
+        assert_array_equal(c, ee)
+        assert_array_equal(a[i1], ee)
+        assert_array_equal(b[i2], ee)
+
+        # non-unique inputs
+        a = np.array([1, 2, 2, 3, 4, 3, 2])
+        b = np.array([1, 8, 4, 2, 2, 3, 2, 3])
+        a.sort()
+        b.sort()
+        c, i1, i2 = intersect1d(a, b, return_indices=True, assume_sorted=True)
+        ef = np.array([1, 2, 3, 4])
+        assert_array_equal(c, ef)
+        assert_array_equal(a[i1], ef)
+        assert_array_equal(b[i2], ef)
+
+        # non1d, unique inputs
+        a = np.array([[2, 4, 5, 6], [7, 8, 1, 15]])
+        b = np.array([[3, 2, 7, 6], [10, 12, 8, 9]])
+        a.sort()
+        b.sort()
+        c, i1, i2 = intersect1d(a, b, assume_unique=True, return_indices=True, assume_sorted=True)
+        ui1 = np.unravel_index(i1, a.shape)
+        ui2 = np.unravel_index(i2, b.shape)
+        ea = np.array([2, 6, 7, 8])
+        assert_array_equal(ea, c)
+        assert_array_equal(ea, a[ui1])
+        assert_array_equal(ea, b[ui2])
+
+        # non1d, not assumed to be uniqueinputs
+        a = np.array([[2, 4, 5, 6, 6], [4, 7, 8, 7, 2]])
+        b = np.array([[3, 2, 7, 7], [10, 12, 8, 7]])
+        a.sort()
+        b.sort()
+        c, i1, i2 = intersect1d(a, b, return_indices=True, assume_sorted=True)
+        ui1 = np.unravel_index(i1, a.shape)
+        ui2 = np.unravel_index(i2, b.shape)
+        ea = np.array([2, 7, 8])
+        assert_array_equal(ea, c)
         assert_array_equal(ea, a[ui1])
         assert_array_equal(ea, b[ui2])
 
