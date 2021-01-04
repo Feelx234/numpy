@@ -340,9 +340,7 @@ def _unique1d(ar, return_index=False, return_inverse=False,
     return ret
 
 
-def _intersect1d_dispatcher(
-        ar1, ar2, assume_unique=None, return_indices=None):
-    return (ar1, ar2)
+
 
 
 
@@ -510,9 +508,13 @@ def _dedup(ar, return_index=False):
         return ar[mask], np.nonzero(mask)[0]
     else:
         return ar[mask]
-    
+
+def _intersect1d_dispatcher(
+        ar1, ar2, assume_unique=None, return_indices=None, assume_sorted=None):
+    return (ar1, ar2)
+
 @array_function_dispatch(_intersect1d_dispatcher)
-def intersect1d(ar1, ar2, return_indices=False, assume_unique=False, assume_sorted=False):
+def intersect1d(ar1, ar2, assume_unique=False, return_indices=False, assume_sorted=False):
     """
     Find the intersection of two arrays.
 
